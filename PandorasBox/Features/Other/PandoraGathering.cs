@@ -1,7 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
@@ -9,7 +5,6 @@ using Dalamud.Game.Chat;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.Text;
-using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Hooking;
 using Dalamud.Interface.Colors;
 using Dalamud.Interface.Components;
@@ -25,6 +20,10 @@ using Lumina.Excel.Sheets;
 using PandorasBox.FeaturesSetup;
 using PandorasBox.Helpers;
 using PandorasBox.UI;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Numerics;
 using Action = Lumina.Excel.Sheets.Action;
 
 namespace PandorasBox.Features.Other
@@ -145,6 +144,7 @@ namespace PandorasBox.Features.Other
         internal Vector4 LightTheme = new Vector4(0.97f, 0.87f, 0.75f, 1f);
         internal Vector4 ClassicFFTheme = new Vector4(0.21f, 0f, 0.68f, 1f);
         internal Vector4 LightBlueTheme = new Vector4(0.21f, 0.36f, 0.59f, 0.25f);
+        internal Vector4 TransparentTheme = new Vector4(0, 0, 0, 0);
 
         public override string Name => "Pandora Quick Gather";
 
@@ -213,7 +213,7 @@ namespace PandorasBox.Features.Other
 
         public override bool UseAutoConfig => false;
 
-        private int lastGatheredIndex = 10;
+        private uint lastGatheredIndex = 10;
         private uint lastGatheredItem = 0;
         private uint CurrentIntegrity { get; set; } = 0;
         private uint MaxIntegrity { get; set; } = 0;
@@ -272,11 +272,11 @@ namespace PandorasBox.Features.Other
             var addon = (AtkUnitBase*)Svc.GameGui.GetAddonByName("Gathering").Address;
             if (addon != null)
             {
-                addon->UldManager.NodeList[5]->ToggleVisibility(true);
-                addon->UldManager.NodeList[6]->ToggleVisibility(true);
-                addon->UldManager.NodeList[8]->ToggleVisibility(true);
-                addon->UldManager.NodeList[9]->ToggleVisibility(true);
-                addon->UldManager.NodeList[10]->ToggleVisibility(true);
+                addon->GetNodeById(38)->ToggleVisibility(true);
+                addon->GetNodeById(37)->ToggleVisibility(true);
+                addon->GetNodeById(33)->ToggleVisibility(true);
+                addon->GetNodeById(34)->ToggleVisibility(true);
+                addon->GetNodeById(31)->ToggleVisibility(true);
             }
             Svc.Condition.ConditionChange -= ResetCounter;
 
@@ -297,12 +297,7 @@ namespace PandorasBox.Features.Other
                 if (addon == null) return;
                 if (!addon->IsVisible) return;
 
-                if (addon->UldManager.NodeListCount < 5) return;
-                if (addon->UldManager.NodeList[2] is null) return;
-                if (addon->UldManager.NodeList[2]->GetAsAtkComponentNode()->Component->UldManager.NodeList[10] is null) return;
-                if (!addon->UldManager.NodeList[2]->GetAsAtkComponentNode()->Component->UldManager.NodeList[10]->IsVisible()) return;
-
-                var node = addon->UldManager.NodeList[10];
+                var node = addon->GetNodeById(31);
 
                 if (node->IsVisible())
                     node->ToggleVisibility(false);
@@ -313,26 +308,17 @@ namespace PandorasBox.Features.Other
 
                 Svc.GameConfig.TryGet(Dalamud.Game.Config.SystemConfigOption.ColorThemeType, out uint color);
 
-                var theme = color switch
-                {
-                    0 => DarkTheme,
-                    1 => LightTheme,
-                    2 => ClassicFFTheme,
-                    3 => LightBlueTheme,
-                    _ => DarkTheme
-                };
+                var theme = TransparentTheme;
+                var isLightTheme = color is 1 or 4 or 7;
 
-                if (color == 3)
-                {
-                    addon->UldManager.NodeList[5]->ToggleVisibility(false);
-                    addon->UldManager.NodeList[6]->ToggleVisibility(false);
-                    addon->UldManager.NodeList[9]->ToggleVisibility(false);
-                    addon->UldManager.NodeList[8]->ToggleVisibility(false);
-                }
+                addon->GetNodeById(38)->ToggleVisibility(false);
+                addon->GetNodeById(37)->ToggleVisibility(false);
+                addon->GetNodeById(33)->ToggleVisibility(false);
+                addon->GetNodeById(34)->ToggleVisibility(false);
 
-                LocationEffect = addon->UldManager.NodeList[8]->GetAsAtkTextNode()->NodeText.GetText();
-                LocationEffect2 = addon->UldManager.NodeList[7]->GetAsAtkTextNode()->NodeText.GetText();
-                if (color == 1)
+                LocationEffect = addon->GetNodeById(34)->GetAsAtkTextNode()->NodeText.GetText();
+                LocationEffect2 = addon->GetNodeById(35)->GetAsAtkTextNode()->NodeText.GetText();
+                if (isLightTheme)
                 {
                     ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0f, 0f, 0f, 1f));
                 }
@@ -491,7 +477,7 @@ namespace PandorasBox.Features.Other
                 ImGui.PopFont();
 
                 ImGui.PopStyleVar(4);
-                ImGui.PopStyleColor(color == 1 ? 3 : 2);
+                ImGui.PopStyleColor(isLightTheme ? 3 : 2);
 
             }
         }
@@ -624,16 +610,16 @@ namespace PandorasBox.Features.Other
                     var nodeHasCollectibles = ids.Any(x => Svc.Data.Excel.GetSheet<Item>().Any(y => y.RowId == x && y.IsCollectable));
                     if (nodeHasCollectibles && !Config.CollectibleStop || !nodeHasCollectibles)
                     {
-                        Dictionary<int, int> boonChances = new();
+                        Dictionary<uint, int> boonChances = new();
                         Dictionary<int, int> gatherChances = new();
 
-                        for (int i = 0; i <= 7; i++)
+                        for (uint i = 0; i <= 7; i++)
                         {
-                            int.TryParse(addon->AtkUnitBase.UldManager.NodeList[25 - i]->GetAsAtkComponentNode()->Component->UldManager.NodeList[21]->GetAsAtkTextNode()->NodeText.ToString(), out var boonChance);
+                            int.TryParse(addon->GetNodeById(17 + i)->GetAsAtkComponentNode()->Component->GetNodeById(16)->GetAsAtkTextNode()->NodeText.ToString(), out var boonChance);
                             boonChances.Add(i, boonChance);
                         }
 
-                        Svc.Log.Debug($"{string.Join(", ", boonChances)}");
+                        Svc.Log.Debug($"Boon Chances: {string.Join(", ", boonChances)}");
 
                         if (Config.UseLuck && NodeHasHiddenItems(ids) && Svc.Objects.LocalPlayer!.CurrentGp >= Config.GPLuck && !HiddenRevealed)
                         {
@@ -689,10 +675,10 @@ namespace PandorasBox.Features.Other
 
                         if (ids.Any(x => x == lastGatheredItem))
                         {
-                            lastGatheredIndex = ids.IndexOf(lastGatheredItem);
+                            lastGatheredIndex = (uint)ids.IndexOf(lastGatheredItem);
                         }
 
-                        if (ids[lastGatheredIndex] == lastGatheredItem || InDiadem)
+                        if (ids[(int)lastGatheredIndex] == lastGatheredItem || InDiadem)
                         {
                             var quickGathering = addon->QuickGatheringComponentCheckBox->IsChecked;
                             if (quickGathering)
@@ -857,7 +843,7 @@ namespace PandorasBox.Features.Other
 
         };
 
-        private void ClickGather(int index)
+        private void ClickGather(uint index)
         {
             TaskManager!.Enqueue(() => !Svc.Condition[ConditionFlag.ExecutingGatheringAction]);
             TaskManager.Enqueue(() =>
@@ -866,11 +852,11 @@ namespace PandorasBox.Features.Other
                 if (addon is null) return;
 
                 if (addon is null) return;
-                var checkBox = addon->GetNodeById(17 + (uint)index)->GetAsAtkComponentCheckBox();
+                var checkBox = addon->GetNodeById(17 + index)->GetAsAtkComponentCheckBox();
                 if (checkBox is null) return;
                 checkBox->AtkComponentButton.IsChecked = true;
                 ECommons.Automation.Callback.Fire(addon, true, index);
-                CheckNodeAndClick(index);
+                CheckNodeAndClick((int)index);
             });
         }
 
