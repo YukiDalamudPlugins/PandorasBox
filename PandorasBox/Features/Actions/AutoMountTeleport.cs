@@ -37,7 +37,7 @@ namespace PandorasBox.Features.Actions
             base.Enable();
         }
 
-        private void RunFeature(ushort e)
+        private void RunFeature(uint e)
         {
             if (!Svc.Data.GetExcelSheet<TerritoryType>().First(x => x.RowId == e).Mount) return;
 
@@ -65,7 +65,7 @@ namespace PandorasBox.Features.Actions
         private static bool NotBetweenAreas => !Svc.Condition[ConditionFlag.BetweenAreas];
         private bool? TryMount()
         {
-            if (Svc.ClientState.LocalPlayer is null) return false;
+            if (Svc.Objects.LocalPlayer is null) return false;
             if (Svc.Condition[ConditionFlag.BetweenAreas] || Svc.Condition[ConditionFlag.BetweenAreas51]) return false;
             if (Svc.Condition[ConditionFlag.Mounted]) return true;
 

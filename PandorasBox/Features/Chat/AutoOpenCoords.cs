@@ -1,11 +1,11 @@
+using Dalamud.Bindings.ImGui;
+using Dalamud.Game.Chat;
 using Dalamud.Game.Text;
-using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
 using ECommons;
 using ECommons.DalamudServices;
 using ECommons.GameHelpers;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
-using Dalamud.Bindings.ImGui;
 using Lumina.Excel.Sheets;
 using PandorasBox.FeaturesSetup;
 using System;
@@ -38,7 +38,7 @@ internal class AutoOpenCoords : Feature
         [FeatureConfigOption("Ignore <pos> flags")]
         public bool IgnorePOS = false;
 
-        public List<ushort> FilteredChannels = new();
+        public List<XivChatType> FilteredChannels = new();
     }
 
     public List<MapLinkMessage> MapLinkMessageList = new();
@@ -56,14 +56,14 @@ internal class AutoOpenCoords : Feature
         XivChatType.RetainerSale
     };
 
-    private void OnChatMessage(XivChatType type, int senderId, ref SeString sender, ref SeString message, ref bool isHandled)
+    private void OnChatMessage(IHandleableChatMessage handler)
     {
         var hasMapLink = false;
         float coordX = 0;
         float coordY = 0;
         float scale = 100;
         MapLinkPayload maplinkPayload = null!;
-        foreach (var payload in message.Payloads)
+        foreach (var payload in handler.Message.Payloads)
         {
             if (payload is MapLinkPayload mapLinkload)
             {
@@ -79,12 +79,12 @@ internal class AutoOpenCoords : Feature
             }
         }
 
-        var messageText = message.TextValue;
+        var messageText = handler.Message.TextValue;
         if (hasMapLink)
         {
             var newMapLinkMessage = new MapLinkMessage(
-                    (ushort)type,
-                    sender.TextValue,
+                    handler.LogKind,
+                    handler.Sender.TextValue,
                     messageText,
                     coordX,
                     coordY,
@@ -95,7 +95,7 @@ internal class AutoOpenCoords : Feature
                 );
 
             var filteredOut = false;
-            if (sender.TextValue.ToLower() == "sonar" && !Config.IncludeSonar)
+            if (handler.Sender.TextValue.ToLower() == "sonar" && !Config.IncludeSonar)
                 filteredOut = true;
 
             var alreadyInList = MapLinkMessageList.Any(w =>
@@ -113,7 +113,7 @@ internal class AutoOpenCoords : Feature
             });
 
             if (alreadyInList) filteredOut = true;
-            if (!filteredOut && Config.FilteredChannels.IndexOf((ushort)type) != -1) filteredOut = true;
+            if (!filteredOut && Config.FilteredChannels.IndexOf(handler.LogKind) != -1) filteredOut = true;
             if (!filteredOut)
             {
                 if (Config.IgnorePOS && newMapLinkMessage.Text.Contains("Z:")) return;
@@ -134,7 +134,7 @@ internal class AutoOpenCoords : Feature
 
     public unsafe void PlaceMapMarker(MapLinkMessage maplinkMessage)
     {
-        if (Player.TerritoryIntendedUse is not (City_Area or Open_World or Inn or Starting_Area or Housing_Instances or Residential_Area or Chocobo_Square or Gold_Saucer or Diadem or Barracks))
+        if (Player.TerritoryIntendedUseEnum is not (City_Area or Open_World or Inn or Starting_Area or Housing_Instances or Residential_Area or Chocobo_Square or Gold_Saucer or Diadem or Barracks))
         {
             Svc.Log.Debug($"Not in a city area, skipping map marker placement.");
             return;
@@ -143,12 +143,10 @@ internal class AutoOpenCoords : Feature
         var map = Svc.Data.GetExcelSheet<TerritoryType>().GetRow(maplinkMessage.TerritoryId).Map;
         var maplink = new MapLinkPayload(maplinkMessage.TerritoryId, map.RowId, maplinkMessage.X, maplinkMessage.Y);
 
+        Svc.GameGui.OpenMapWithMapLink(maplink);
         if (Config.DontOpenMap)
-        {
-            AgentMap.Instance()->SetFlagMapMarker(maplinkMessage.TerritoryId, map.RowId, maplink.RawX, maplink.RawY);
-        }
-        else
-            Svc.GameGui.OpenMapWithMapLink(maplink);
+            AgentMap.Instance()->HideAddon();
+
     }
 
     public override void Enable()
@@ -162,21 +160,22 @@ internal class AutoOpenCoords : Feature
     {
         SaveConfig(Config);
         Svc.Chat.ChatMessage -= OnChatMessage;
+        MapLinkMessageList.Clear();
         base.Disable();
     }
 
     protected override DrawConfigDelegate DrawConfigTree => (ref bool hasChanged) =>
     {
-        if (ImGui.Checkbox("Include Sonar links", ref Config.IncludeSonar)) hasChanged = true;
-        if (ImGui.Checkbox("Ignore <pos> flags", ref Config.IgnorePOS)) hasChanged = true;
-        //ImGui.Checkbox("Set <flag> without opening the map", ref Config.DontOpenMap);
+        hasChanged |= ImGui.Checkbox("Include Sonar links", ref Config.IncludeSonar);
+        hasChanged |= ImGui.Checkbox("Ignore <pos> flags", ref Config.IgnorePOS);
+        hasChanged |= ImGui.Checkbox("Set <flag> without opening the map", ref Config.DontOpenMap);
 
         if (ImGui.CollapsingHeader("Channel Filters (Whitelist)"))
         {
             ImGui.Indent();
-            foreach (ushort chatType in Enum.GetValues(typeof(XivChatType)))
+            foreach (XivChatType chatType in Enum.GetValues(typeof(XivChatType)))
             {
-                if (HiddenChatType.IndexOf((XivChatType)chatType) != -1) continue;
+                if (HiddenChatType.IndexOf(chatType) != -1) continue;
 
                 var chatTypeName = Enum.GetName(typeof(XivChatType), chatType);
                 var checkboxClicked = Config.FilteredChannels.IndexOf(chatType) == -1;
@@ -209,7 +208,7 @@ public class MapLinkMessage
 {
     public static MapLinkMessage Empty => new(0, string.Empty, string.Empty, 0, 0, 100, 0, string.Empty, DateTime.Now);
 
-    public ushort ChatType;
+    public XivChatType ChatType;
     public string Sender;
     public string Text;
     public float X;
@@ -219,7 +218,7 @@ public class MapLinkMessage
     public string PlaceName;
     public DateTime RecordTime;
 
-    public MapLinkMessage(ushort chatType, string sender, string text, float x, float y, float scale, uint territoryId, string placeName, DateTime recordTime)
+    public MapLinkMessage(XivChatType chatType, string sender, string text, float x, float y, float scale, uint territoryId, string placeName, DateTime recordTime)
     {
         ChatType = chatType;
         Sender = sender;
